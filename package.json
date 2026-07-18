@@ -1,0 +1,48 @@
+{
+  "name": "zen-fs-github",
+  "version": "1.0.0",
+  "description": "A ZenFS backend for GitHub repositories",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "readme.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "peerDependencies": {
+    "@zenfs/core": "^2.5.0"
+  },
+  "devDependencies": {
+    "@zenfs/core": "^2.5.7",
+    "kerium": "^1.3.4",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  },
+  "keywords": [
+    "zenfs",
+    "github",
+    "filesystem",
+    "browser",
+    "backend"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/weijia/zen-fs-github.git"
+  },
+  "bugs": {
+    "url": "https://github.com/weijia/zen-fs-github/issues"
+  },
+  "homepage": "https://github.com/weijia/zen-fs-github#readme"
+}
