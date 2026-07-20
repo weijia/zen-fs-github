@@ -31,11 +31,28 @@ export class GithubFS extends IndexFS {
     }
     /**
      * Initialize the file system by loading the repository tree.
+     * If the configured branch does not exist, it will be created from 'main'.
      */
     async init() {
         if (this.initialized)
             return;
-        const tree = await this.api.getTree(true);
+        let tree = [];
+        try {
+            tree = await this.api.getTree(true);
+        }
+        catch (err) {
+            const msg = err.message || '';
+            // Branch not found — try to create it
+            if (msg.includes('404') || msg.includes('Not Found') || msg.includes('not found')) {
+                console.log(`[GithubFS] Branch '${this.options.branch}' not found, attempting to create...`);
+                await this.api.createBranch(this.options.branch || 'main', 'main');
+                // Retry loading tree
+                tree = await this.api.getTree(true);
+            }
+            else {
+                throw err;
+            }
+        }
         for (const item of tree) {
             // GitHub trees include the item itself; skip submodules
             if (item.type !== 'blob' && item.type !== 'tree')

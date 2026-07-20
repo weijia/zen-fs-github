@@ -24,6 +24,7 @@ export declare class GithubFS extends IndexFS {
     private _queue;
     /**
      * Initialize the file system by loading the repository tree.
+     * If the configured branch does not exist, it will be created from 'main'.
      */
     init(): Promise<void>;
     /**

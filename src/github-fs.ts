@@ -2,7 +2,7 @@ import { withErrno } from 'kerium';
 import { IndexFS, Index, Inode } from '@zenfs/core';
 import { S_IFDIR, S_IFREG } from '@zenfs/core/constants';
 import type { CreationOptions, InodeLike } from '@zenfs/core';
-import { GithubAPI } from './github-api.js';
+import { GithubAPI, type GithubTreeItem } from './github-api.js';
 import type { GithubOptions } from './types.js';
 
 /**
@@ -37,10 +37,26 @@ export class GithubFS extends IndexFS {
 
 	/**
 	 * Initialize the file system by loading the repository tree.
+	 * If the configured branch does not exist, it will be created from 'main'.
 	 */
 	async init(): Promise<void> {
 		if (this.initialized) return;
-		const tree = await this.api.getTree(true);
+
+		let tree: GithubTreeItem[] = [];
+		try {
+			tree = await this.api.getTree(true);
+		} catch (err: any) {
+			const msg = err.message || '';
+			// Branch not found — try to create it
+			if (msg.includes('404') || msg.includes('Not Found') || msg.includes('not found')) {
+				console.log(`[GithubFS] Branch '${this.options.branch}' not found, attempting to create...`);
+				await this.api.createBranch(this.options.branch || 'main', 'main');
+				// Retry loading tree
+				tree = await this.api.getTree(true);
+			} else {
+				throw err;
+			}
+		}
 
 		for (const item of tree) {
 			// GitHub trees include the item itself; skip submodules

@@ -76,6 +76,32 @@ export class GithubAPI {
 		return data.tree || [];
 	}
 
+	/**
+	 * Get the latest commit SHA of a branch.
+	 */
+	async getBranchSha(branch: string): Promise<string> {
+		const data = await this.request(`/repos/${this.owner}/${this.repo}/git/refs/heads/${branch}`);
+		return data.object?.sha;
+	}
+
+	/**
+	 * Create a new branch from an existing branch or commit SHA.
+	 */
+	async createBranch(newBranch: string, fromRef: string = 'main'): Promise<void> {
+		console.log(`[GithubAPI] creating branch '${newBranch}' from '${fromRef}'`);
+		const sha = await this.getBranchSha(fromRef);
+		if (!sha) throw new Error(`Cannot find SHA for branch '${fromRef}'`);
+		await this.request(`/repos/${this.owner}/${this.repo}/git/refs`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				ref: `refs/heads/${newBranch}`,
+				sha,
+			}),
+		});
+		console.log(`[GithubAPI] branch '${newBranch}' created from sha=${sha}`);
+	}
+
 	async getContents(path: string): Promise<GithubContentItem | GithubContentItem[]> {
 		return this.request(`/repos/${this.owner}/${this.repo}/contents/${apiPath(path)}?ref=${this.branch}`);
 	}

@@ -31,6 +31,14 @@ export declare class GithubAPI {
     private headers;
     request(path: string, init?: RequestInit): Promise<any>;
     getTree(recursive?: boolean): Promise<GithubTreeItem[]>;
+    /**
+     * Get the latest commit SHA of a branch.
+     */
+    getBranchSha(branch: string): Promise<string>;
+    /**
+     * Create a new branch from an existing branch or commit SHA.
+     */
+    createBranch(newBranch: string, fromRef?: string): Promise<void>;
     getContents(path: string): Promise<GithubContentItem | GithubContentItem[]>;
     getRaw(path: string): Promise<ArrayBuffer>;
     createFile(path: string, content: Uint8Array, message: string): Promise<void>;
