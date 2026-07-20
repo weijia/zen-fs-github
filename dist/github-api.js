@@ -25,12 +25,15 @@ export class GithubAPI {
     }
     async request(path, init) {
         const url = `${this.baseUrl}${path}`;
+        console.log(`[GithubAPI] request: ${init?.method || 'GET'} ${url}`);
         const response = await fetch(url, {
             ...init,
             headers: { ...this.headers(), ...init?.headers },
         });
+        console.log(`[GithubAPI] response: status=${response.status} url=${response.url} type=${response.headers.get('content-type')}`);
         if (!response.ok) {
             const text = await response.text().catch(() => '');
+            console.log(`[GithubAPI] ERROR body: ${text.substring(0, 500)}`);
             throw new Error(`GitHub API ${response.status}: ${text}`);
         }
         if (response.status === 204)
