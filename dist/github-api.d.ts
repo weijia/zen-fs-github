@@ -37,6 +37,12 @@ export declare class GithubAPI {
     getBranchSha(branch: string): Promise<string>;
     /**
      * Create a new branch from an existing branch or commit SHA.
+     *
+     * Strategy:
+     *  1. Try the git/refs API (standard GitHub approach).
+     *  2. If the repo is empty (no branches / refs at all), GitHub returns
+     *     422 "Reference already exists" or 404 for the base ref. Fall back
+     *     to the Contents API which implicitly creates the branch on commit.
      */
     createBranch(newBranch: string, fromRef?: string): Promise<void>;
     getContents(path: string): Promise<GithubContentItem | GithubContentItem[]>;

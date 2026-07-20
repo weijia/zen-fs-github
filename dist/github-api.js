@@ -57,21 +57,50 @@ export class GithubAPI {
     }
     /**
      * Create a new branch from an existing branch or commit SHA.
+     *
+     * Strategy:
+     *  1. Try the git/refs API (standard GitHub approach).
+     *  2. If the repo is empty (no branches / refs at all), GitHub returns
+     *     422 "Reference already exists" or 404 for the base ref. Fall back
+     *     to the Contents API which implicitly creates the branch on commit.
      */
     async createBranch(newBranch, fromRef = 'main') {
         console.log(`[GithubAPI] creating branch '${newBranch}' from '${fromRef}'`);
-        const sha = await this.getBranchSha(fromRef);
-        if (!sha)
-            throw new Error(`Cannot find SHA for branch '${fromRef}'`);
-        await this.request(`/repos/${this.owner}/${this.repo}/git/refs`, {
-            method: 'POST',
+        // Step 1: Try the git/refs API first
+        try {
+            const sha = await this.getBranchSha(fromRef);
+            if (sha) {
+                await this.request(`/repos/${this.owner}/${this.repo}/git/refs`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ref: `refs/heads/${newBranch}`,
+                        sha,
+                    }),
+                });
+                console.log(`[GithubAPI] branch '${newBranch}' created via /git/refs API from sha=${sha}`);
+                return;
+            }
+        }
+        catch (err) {
+            console.log(`[GithubAPI] /git/refs approach failed: ${err.message}`);
+        }
+        // Step 2: Empty repo — no branches exist at all.
+        // GitHub docs: "You are unable to create new references for empty
+        // repositories." Use the Contents API instead to create an initial
+        // file, which implicitly creates the branch.
+        console.log(`[GithubAPI] falling back to Contents API to initialize branch '${newBranch}'`);
+        const content = btoa('');
+        await this.request(`/repos/${this.owner}/${this.repo}/contents/.gitkeep`, {
+            method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                ref: `refs/heads/${newBranch}`,
-                sha,
+                message: `Initialize branch '${newBranch}'`,
+                content,
+                branch: newBranch,
             }),
         });
-        console.log(`[GithubAPI] branch '${newBranch}' created from sha=${sha}`);
+        console.log(`[GithubAPI] branch '${newBranch}' initialized via Contents API (.gitkeep)`);
     }
     async getContents(path) {
         return this.request(`/repos/${this.owner}/${this.repo}/contents/${apiPath(path)}?ref=${this.branch}`);
