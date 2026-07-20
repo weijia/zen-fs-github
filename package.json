@@ -1,6 +1,6 @@
 {
   "name": "zen-fs-github",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A ZenFS backend for GitHub repositories",
   "type": "module",
   "main": "dist/index.js",
