@@ -117,8 +117,11 @@ export class GithubAPI {
         }
         return response.arrayBuffer();
     }
+    /**
+     * Create a new file. Returns the new blob SHA.
+     */
     async createFile(path, content, message) {
-        await this.request(`/repos/${this.owner}/${this.repo}/contents/${apiPath(path)}`, {
+        const data = await this.request(`/repos/${this.owner}/${this.repo}/contents/${apiPath(path)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -127,29 +130,116 @@ export class GithubAPI {
                 branch: this.branch,
             }),
         });
+        return data?.content?.sha || '';
     }
+    /**
+     * Update an existing file. Returns the new blob SHA.
+     * On "sha does not match" error, fetches the current SHA and retries once.
+     */
     async updateFile(path, content, sha, message) {
-        await this.request(`/repos/${this.owner}/${this.repo}/contents/${apiPath(path)}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message,
-                content: encodeBase64(content),
-                sha,
-                branch: this.branch,
-            }),
-        });
+        try {
+            const data = await this.request(`/repos/${this.owner}/${this.repo}/contents/${apiPath(path)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message,
+                    content: encodeBase64(content),
+                    sha,
+                    branch: this.branch,
+                }),
+            });
+            return data?.content?.sha || '';
+        }
+        catch (err) {
+            const msg = err.message || '';
+            if (msg.includes('sha does not match') || msg.includes('SHA does not match') || msg.includes('409')) {
+                console.warn(`[GithubAPI] SHA mismatch for ${path}, refreshing SHA and retrying...`);
+                const freshSha = await this.getFileSha(path);
+                if (freshSha) {
+                    const data = await this.request(`/repos/${this.owner}/${this.repo}/contents/${apiPath(path)}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            message,
+                            content: encodeBase64(content),
+                            sha: freshSha,
+                            branch: this.branch,
+                        }),
+                    });
+                    return data?.content?.sha || freshSha;
+                }
+            }
+            throw err;
+        }
     }
+    /**
+     * Delete a file.
+     * On "sha does not match" error, fetches the current SHA and retries once.
+     */
     async deleteFile(path, sha, message) {
-        await this.request(`/repos/${this.owner}/${this.repo}/contents/${apiPath(path)}`, {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message,
-                sha,
-                branch: this.branch,
-            }),
-        });
+        try {
+            await this.request(`/repos/${this.owner}/${this.repo}/contents/${apiPath(path)}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message,
+                    sha,
+                    branch: this.branch,
+                }),
+            });
+        }
+        catch (err) {
+            const msg = err.message || '';
+            if (msg.includes('sha does not match') || msg.includes('SHA does not match') || msg.includes('409')) {
+                console.warn(`[GithubAPI] SHA mismatch for delete ${path}, refreshing SHA and retrying...`);
+                const freshSha = await this.getFileSha(path);
+                if (freshSha) {
+                    await this.request(`/repos/${this.owner}/${this.repo}/contents/${apiPath(path)}`, {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            message,
+                            sha: freshSha,
+                            branch: this.branch,
+                        }),
+                    });
+                    return;
+                }
+            }
+            throw err;
+        }
+    }
+    /**
+     * Get the current blob SHA of a file via the Contents API.
+     */
+    async getFileSha(path) {
+        try {
+            const data = await this.getContents(path);
+            return data?.sha || null;
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
+     * Get the last commit for a specific file path.
+     * Returns the committer date as an ISO string and the commit SHA.
+     */
+    async getLastCommit(path) {
+        try {
+            const commits = await this.request(`/repos/${this.owner}/${this.repo}/commits?path=${apiPath(path)}&sha=${this.branch}&per_page=1`);
+            if (Array.isArray(commits) && commits.length > 0) {
+                const commit = commits[0];
+                const date = commit.commit?.committer?.date;
+                if (date) {
+                    return { date, sha: commit.sha };
+                }
+            }
+            return null;
+        }
+        catch {
+            return null;
+        }
     }
 }
 //# sourceMappingURL=github-api.js.map

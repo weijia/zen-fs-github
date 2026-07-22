@@ -331,6 +331,67 @@ describe('GithubFS', () => {
 
 			expect(() => fs.statSync('/missing')).toThrow();
 		});
+
+		it('async stat enriches mtime from Commits API', async () => {
+			fetchSpy.mockResolvedValueOnce(mockTreeResponse([
+				{ path: 'file.txt', type: 'blob', sha: 'blob-abc', size: 50, mode: '100644' },
+			]));
+			await fs.init();
+
+			// Mock the Commits API call
+			fetchSpy.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: async () => ([{
+					sha: 'commit-1',
+					commit: { committer: { date: '2026-07-20T10:30:00Z' } },
+				}]),
+				text: async () => '',
+				arrayBuffer: async () => new ArrayBuffer(0),
+			} as Response);
+
+			const inode = await fs.stat('/file.txt');
+			expect(inode.mtimeMs).toBe(new Date('2026-07-20T10:30:00Z').getTime());
+		});
+
+		it('async stat uses cached mtime on second call', async () => {
+			fetchSpy.mockResolvedValueOnce(mockTreeResponse([
+				{ path: 'file.txt', type: 'blob', sha: 'blob-abc', size: 50, mode: '100644' },
+			]));
+			await fs.init();
+
+			fetchSpy.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: async () => ([{
+					sha: 'commit-1',
+					commit: { committer: { date: '2026-07-20T10:30:00Z' } },
+				}]),
+				text: async () => '',
+				arrayBuffer: async () => new ArrayBuffer(0),
+			} as Response);
+
+			await fs.stat('/file.txt');
+			// Second call should NOT trigger another API call
+			const inode2 = await fs.stat('/file.txt');
+			expect(inode2.mtimeMs).toBe(new Date('2026-07-20T10:30:00Z').getTime());
+			// Only tree + 1 commits call
+			expect(fetchSpy).toHaveBeenCalledTimes(2);
+		});
+
+		it('async stat does not call Commits API for directories', async () => {
+			fetchSpy.mockResolvedValueOnce(mockTreeResponse([
+				{ path: 'docs', type: 'tree', sha: 'tree-abc', mode: '040000' },
+			]));
+			await fs.init();
+
+			const inode = await fs.stat('/docs');
+			expect((inode.mode & S_IFDIR) === S_IFDIR).toBe(true);
+			// Only tree call, no commits call
+			expect(fetchSpy).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('ready', () => {
@@ -348,6 +409,50 @@ describe('GithubFS', () => {
 	describe('fs name and type', () => {
 		it('has correct name', () => {
 			expect(fs.name).toBe('github');
+		});
+	});
+
+	describe('getFileSha', () => {
+		it('returns cached SHA for known file', async () => {
+			fetchSpy.mockResolvedValueOnce(mockTreeResponse([
+				{ path: 'known.txt', type: 'blob', sha: 'cached-sha-123', size: 10, mode: '100644' },
+			]));
+			await fs.init();
+
+			expect(fs.getFileSha('/known.txt')).toBe('cached-sha-123');
+		});
+
+		it('returns undefined for unknown file', async () => {
+			fetchSpy.mockResolvedValueOnce(mockTreeResponse([]));
+			await fs.init();
+
+			expect(fs.getFileSha('/unknown.txt')).toBeUndefined();
+		});
+	});
+
+	describe('write updates shaCache', () => {
+		it('async write stores new SHA after create', async () => {
+			fetchSpy.mockResolvedValueOnce(mockTreeResponse([]));
+			await fs.init();
+
+			fs.createFileSync('/new.txt', { mode: 0o644, uid: 0, gid: 0 });
+
+			fetchSpy.mockResolvedValueOnce(mockOkJson({ content: { sha: 'created-sha' } }));
+			await fs.write('/new.txt', new TextEncoder().encode('data'), 0);
+
+			expect(fs.shaCache.get('/new.txt')).toBe('created-sha');
+		});
+
+		it('async write updates SHA after update', async () => {
+			fetchSpy.mockResolvedValueOnce(mockTreeResponse([
+				{ path: 'old.txt', type: 'blob', sha: 'old-sha', size: 3, mode: '100644' },
+			]));
+			await fs.init();
+
+			fetchSpy.mockResolvedValueOnce(mockOkJson({ content: { sha: 'updated-sha' } }));
+			await fs.write('/old.txt', new TextEncoder().encode('new'), 0);
+
+			expect(fs.shaCache.get('/old.txt')).toBe('updated-sha');
 		});
 	});
 });

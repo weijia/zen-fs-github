@@ -47,8 +47,31 @@ export declare class GithubAPI {
     createBranch(newBranch: string, fromRef?: string): Promise<void>;
     getContents(path: string): Promise<GithubContentItem | GithubContentItem[]>;
     getRaw(path: string): Promise<ArrayBuffer>;
-    createFile(path: string, content: Uint8Array, message: string): Promise<void>;
-    updateFile(path: string, content: Uint8Array, sha: string, message: string): Promise<void>;
+    /**
+     * Create a new file. Returns the new blob SHA.
+     */
+    createFile(path: string, content: Uint8Array, message: string): Promise<string>;
+    /**
+     * Update an existing file. Returns the new blob SHA.
+     * On "sha does not match" error, fetches the current SHA and retries once.
+     */
+    updateFile(path: string, content: Uint8Array, sha: string, message: string): Promise<string>;
+    /**
+     * Delete a file.
+     * On "sha does not match" error, fetches the current SHA and retries once.
+     */
     deleteFile(path: string, sha: string, message: string): Promise<void>;
+    /**
+     * Get the current blob SHA of a file via the Contents API.
+     */
+    getFileSha(path: string): Promise<string | null>;
+    /**
+     * Get the last commit for a specific file path.
+     * Returns the committer date as an ISO string and the commit SHA.
+     */
+    getLastCommit(path: string): Promise<{
+        date: string;
+        sha: string;
+    } | null>;
 }
 //# sourceMappingURL=github-api.d.ts.map

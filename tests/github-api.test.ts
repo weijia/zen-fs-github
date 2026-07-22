@@ -95,7 +95,7 @@ describe('GithubAPI', () => {
 		expect(url).toContain('raw.githubusercontent.com/test-owner/test-repo/main/src/index.ts');
 	});
 
-	it('createFile sends PUT with base64 content', async () => {
+	it('createFile sends PUT with base64 content and returns sha', async () => {
 		fetchSpy.mockResolvedValueOnce({
 			ok: true,
 			status: 201,
@@ -106,8 +106,9 @@ describe('GithubAPI', () => {
 		} as Response);
 
 		const content = new TextEncoder().encode('hello');
-		await api.createFile('/test.txt', content, 'create test');
+		const resultSha = await api.createFile('/test.txt', content, 'create test');
 
+		expect(resultSha).toBe('new-sha');
 		const [_url, init] = fetchSpy.mock.calls[0];
 		expect(init?.method).toBe('PUT');
 		const body = JSON.parse(init?.body as string);
@@ -117,7 +118,7 @@ describe('GithubAPI', () => {
 		expect(body.sha).toBeUndefined();
 	});
 
-	it('updateFile sends PUT with sha', async () => {
+	it('updateFile sends PUT with sha and returns new sha', async () => {
 		fetchSpy.mockResolvedValueOnce({
 			ok: true,
 			status: 200,
@@ -128,13 +129,83 @@ describe('GithubAPI', () => {
 		} as Response);
 
 		const content = new TextEncoder().encode('updated');
-		await api.updateFile('/test.txt', content, 'old-sha', 'update test');
+		const resultSha = await api.updateFile('/test.txt', content, 'old-sha', 'update test');
 
+		expect(resultSha).toBe('new-sha');
 		const [_url, init] = fetchSpy.mock.calls[0];
 		expect(init?.method).toBe('PUT');
 		const body = JSON.parse(init?.body as string);
 		expect(body.sha).toBe('old-sha');
 		expect(body.message).toBe('update test');
+	});
+
+	it('updateFile retries on SHA mismatch', async () => {
+		// First call: SHA mismatch
+		fetchSpy.mockResolvedValueOnce({
+			ok: false,
+			status: 409,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: async () => ({ message: 'sha does not match' }),
+			text: async () => '{"message":"sha does not match"}',
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as Response);
+		// getFileSha call
+		fetchSpy.mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: async () => ({ type: 'file', sha: 'fresh-sha', path: 'test.txt' }),
+			text: async () => '',
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as Response);
+		// Retry with fresh SHA
+		fetchSpy.mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: async () => ({ content: { sha: 'even-newer-sha' } }),
+			text: async () => '',
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as Response);
+
+		const content = new TextEncoder().encode('data');
+		const resultSha = await api.updateFile('/test.txt', content, 'stale-sha', 'fix');
+
+		expect(resultSha).toBe('even-newer-sha');
+		expect(fetchSpy).toHaveBeenCalledTimes(3);
+	});
+
+	it('deleteFile retries on SHA mismatch', async () => {
+		// First call: SHA mismatch
+		fetchSpy.mockResolvedValueOnce({
+			ok: false,
+			status: 409,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: async () => ({ message: 'sha does not match' }),
+			text: async () => '{"message":"sha does not match"}',
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as Response);
+		// getFileSha call
+		fetchSpy.mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: async () => ({ type: 'file', sha: 'fresh-sha', path: 'test.txt' }),
+			text: async () => '',
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as Response);
+		// Retry delete
+		fetchSpy.mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: async () => ({ commit: { sha: 'c' } }),
+			text: async () => '',
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as Response);
+
+		await api.deleteFile('/test.txt', 'stale-sha', 'delete');
+		expect(fetchSpy).toHaveBeenCalledTimes(3);
 	});
 
 	it('deleteFile sends DELETE with sha', async () => {
@@ -200,5 +271,67 @@ describe('GithubAPI', () => {
 		});
 		// Verify it doesn't throw — branch defaults to 'main' internally
 		expect(noBranchApi).toBeDefined();
+	});
+
+	it('getLastCommit returns commit date and sha', async () => {
+		fetchSpy.mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: async () => ([{
+				sha: 'commit-abc',
+				commit: { committer: { date: '2026-07-20T10:30:00Z' } },
+			}]),
+			text: async () => '',
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as Response);
+
+		const result = await api.getLastCommit('/src/index.ts');
+		expect(result).toEqual({ date: '2026-07-20T10:30:00Z', sha: 'commit-abc' });
+
+		const url = fetchSpy.mock.calls[0][0] as string;
+		expect(url).toContain('/commits?path=src/index.ts&sha=main&per_page=1');
+	});
+
+	it('getLastCommit returns null on error', async () => {
+		fetchSpy.mockResolvedValueOnce({
+			ok: false,
+			status: 500,
+			headers: new Headers({}),
+			json: async () => ({}),
+			text: async () => 'server error',
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as Response);
+
+		const result = await api.getLastCommit('/missing');
+		expect(result).toBeNull();
+	});
+
+	it('getFileSha returns sha for existing file', async () => {
+		fetchSpy.mockResolvedValueOnce({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: async () => ({ type: 'file', sha: 'blob-xyz', path: 'test.txt' }),
+			text: async () => '',
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as Response);
+
+		const sha = await api.getFileSha('/test.txt');
+		expect(sha).toBe('blob-xyz');
+	});
+
+	it('getFileSha returns null for missing file', async () => {
+		fetchSpy.mockResolvedValueOnce({
+			ok: false,
+			status: 404,
+			headers: new Headers({}),
+			json: async () => ({ message: 'Not Found' }),
+			text: async () => 'Not Found',
+			arrayBuffer: async () => new ArrayBuffer(0),
+		} as Response);
+
+		const sha = await api.getFileSha('/missing');
+		expect(sha).toBeNull();
 	});
 });

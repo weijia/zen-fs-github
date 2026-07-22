@@ -17,6 +17,8 @@ export class GithubFS extends IndexFS {
 	readonly shaCache = new Map<string, string>();
 	/** In-memory content cache to support synchronous reads. */
 	readonly contentCache = new Map<string, Uint8Array>();
+	/** Cached file mtime entries: path -> { sha, lastModified }. Populated lazily via Commits API. */
+	readonly mtimeCache = new Map<string, { sha: string; lastModified: string }>();
 	/** Serializes async background operations. */
 	private pending = Promise.resolve();
 	private options: GithubOptions;
@@ -209,10 +211,15 @@ export class GithubFS extends IndexFS {
 		}
 
 		const sha = this.shaCache.get(path);
+		let newSha: string;
 		if (sha) {
-			await this.api.updateFile(path, merged, sha, `Update ${path}`);
+			newSha = await this.api.updateFile(path, merged, sha, `Update ${path}`);
+			this.shaCache.set(path, newSha);
+			// Invalidate mtime cache for this file
+			this.mtimeCache.delete(path);
 		} else {
-			await this.api.createFile(path, merged, `Create ${path}`);
+			newSha = await this.api.createFile(path, merged, `Create ${path}`);
+			this.shaCache.set(path, newSha);
 		}
 	}
 
@@ -234,7 +241,12 @@ export class GithubFS extends IndexFS {
 			(sha
 				? this.api.updateFile(path, merged, sha, `Update ${path}`)
 				: this.api.createFile(path, merged, `Create ${path}`)
-			).catch(() => {})
+			)
+				.then((newSha) => {
+					this.shaCache.set(path, newSha);
+					this.mtimeCache.delete(path);
+				})
+				.catch(() => {})
 		);
 	}
 
@@ -246,5 +258,49 @@ export class GithubFS extends IndexFS {
 
 	syncSync(): void {
 		// Background ops are fire-and-forget
+	}
+
+	// --- Stat (overridden to provide real mtime from Commits API) ---
+
+	/**
+	 * Get the stat of a file. For regular files, this enriches the Inode's
+	 * mtimeMs with the real last commit date from the GitHub Commits API.
+	 * The first call for a file triggers an API request; subsequent calls
+	 * use the cached value unless the blob SHA has changed.
+	 */
+	override async stat(path: string): Promise<Inode> {
+		const inode = await super.stat(path);
+
+		// Only enrich mtime for regular files
+		if ((inode.mode & S_IFREG) !== S_IFREG) return inode;
+
+		const cached = this.mtimeCache.get(path);
+		const currentSha = this.shaCache.get(path);
+
+		// If cached SHA matches current SHA, use cached mtime
+		if (cached && cached.sha === currentSha && cached.lastModified) {
+			inode.update({ mtimeMs: new Date(cached.lastModified).getTime() });
+			return inode;
+		}
+
+		// SHA changed or no cache — fetch from Commits API
+		if (currentSha) {
+			const commit = await this.api.getLastCommit(path);
+			if (commit) {
+				this.mtimeCache.set(path, { sha: currentSha, lastModified: commit.date });
+				inode.update({ mtimeMs: new Date(commit.date).getTime() });
+				return inode;
+			}
+		}
+
+		return inode;
+	}
+
+	/**
+	 * Get the blob SHA for a file (from shaCache). Useful for external
+	 * revision checking (e.g. zen-fs-cache getRevision).
+	 */
+	getFileSha(path: string): string | undefined {
+		return this.shaCache.get(path);
 	}
 }
