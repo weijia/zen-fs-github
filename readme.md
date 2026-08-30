@@ -1,8 +1,20 @@
 # zen-fs-github
 
-A [ZenFS](https://github.com/zen-fs/core) backend that maps file system operations to a **GitHub** repository via the GitHub REST API v3.
+A [ZenFS](https://github.com/weijia/zen-fs) backend that maps file system operations to a **GitHub** repository via the GitHub REST API v3.
 
-This allows you to read and write files in a GitHub repo directly from the browser (or Node.js) using ZenFS's standard `fs` API.
+Read and write files in a GitHub repo directly from the browser or Node.js using ZenFS's standard `fs` API. Works seamlessly with `zen-fs-sync` for cross-backend synchronization.
+
+## Features
+
+- **Full file system API** — read, write, delete, stat, readdir, and more, all backed by a real Git repository
+- **Synchronous reads** — file contents are preloaded into memory on mount, so `readFileSync` works out of the box
+- **Async writes** — `writeFileSync` and `removeSync` update the local cache immediately and queue API calls in the background
+- **Commit history** — every write creates a new commit on the target branch
+- **mtime from commits** — `stat()` returns the real last commit time for each file (cached after first lookup)
+- **GitHub Enterprise support** — use a custom `baseUrl` for self-hosted GitHub instances
+- **Efficient downloads** — raw file downloads use `raw.githubusercontent.com` for speed
+- **Browser & Node.js** — works in both environments
+- **Sync-ready** — compatible with `zen-fs-sync` for bi-directional sync with other backends
 
 ## Installation
 
@@ -11,6 +23,8 @@ npm install zen-fs-github @zenfs/core
 ```
 
 ## Usage
+
+### Basic setup with ZenFS
 
 ```typescript
 import { configure, fs } from '@zenfs/core';
@@ -23,10 +37,10 @@ await configure({
       token: 'YOUR_GITHUB_PERSONAL_ACCESS_TOKEN',
       owner: 'github-username',
       repo: 'repository-name',
-      branch: 'main',           // optional, defaults to main
-      disableAsyncCache: false, // optional, preload file contents for sync reads
-    }
-  }
+      branch: 'main',             // optional, defaults to main
+      disableAsyncCache: false,   // optional, preload file contents for sync reads
+    },
+  },
 });
 
 // Read a file
@@ -37,11 +51,49 @@ fs.writeFileSync('/repo/src/hello.ts', 'export const hello = "world";');
 
 // List directory
 const files = fs.readdirSync('/repo/src');
+
+// Delete a file
+fs.unlinkSync('/repo/src/old-file.txt');
+```
+
+### With zen-fs-sync
+
+```typescript
+import { SyncPair, SyncDirection } from 'zen-fs-sync';
+import { Github } from 'zen-fs-github';
+
+const githubFS = await Github.create({
+  token: 'your-token',
+  owner: 'your-name',
+  repo: 'config-repo',
+  branch: 'main',
+});
+
+// Sync local IndexedDB with a GitHub repo
+const pair = new SyncPair(localFS, githubFS, {
+  direction: SyncDirection.BiDirectional,
+  pollIntervalMs: 300000, // 5 minutes
+});
+
+pair.watch();
+```
+
+### GitHub Enterprise
+
+```typescript
+import { Github } from 'zen-fs-github';
+
+const gheFS = await Github.create({
+  token: 'your-token',
+  owner: 'your-org',
+  repo: 'config-repo',
+  baseUrl: 'https://github.your-company.com/api/v3',
+});
 ```
 
 ## API Reference
 
-### `Github` Backend
+### Github Backend Options
 
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
@@ -52,13 +104,25 @@ const files = fs.readdirSync('/repo/src');
 | `baseUrl` | `string` | No | GitHub API base URL. Defaults to `https://api.github.com`. Set this for GitHub Enterprise. |
 | `disableAsyncCache` | `boolean` | No | If `true`, disables preloading file contents. Sync reads will throw `EAGAIN` until the file is read asynchronously. |
 
-## How it Works
+### Methods
 
-- On mount, the backend fetches the repository's git tree and builds an in-memory `Index` of all files and directories.
-- By default, all file contents are preloaded into memory so that **synchronous reads** work out of the box.
-- Writes are translated to `PUT` requests against the GitHub Contents API (GitHub uses PUT for both create and update).
-- Each write creates a new commit on the target branch.
-- Raw file downloads use `raw.githubusercontent.com` for efficiency.
+| Method | Description |
+|--------|-------------|
+| `Github.create(options)` | Static factory — creates and initializes the backend |
+| `init()` | Loads the repo tree and builds the in-memory index |
+| `preloadContents()` | Preloads all file contents into memory for sync reads |
+| `ready()` | Waits for initialization to complete |
+| `sync()` | Waits for all pending background write operations to finish |
+| `getFileSha(path)` | Returns the blob SHA for a file (useful for revision checks) |
+
+## How It Works
+
+1. **On mount**, the backend fetches the repository's git tree and builds an in-memory `Index` of all files and directories.
+2. **By default**, all file contents are preloaded into memory so that **synchronous reads** work out of the box.
+3. **Writes** are translated to `PUT` requests against the GitHub Contents API (GitHub uses PUT for both create and update).
+4. **Each write** creates a new commit on the target branch.
+5. **Raw file downloads** use `raw.githubusercontent.com` for maximum efficiency.
+6. **Background sync** — synchronous methods (`writeFileSync`, `removeSync`) update the local cache immediately and queue API calls. Call `sync()` to wait for all pending operations.
 
 ## Differences from zen-fs-gitee
 
