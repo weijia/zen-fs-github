@@ -11,12 +11,16 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "browser": "./dist/zen-fs-github.global.js",
+  "unpkg": "./dist/zen-fs-github.global.js",
+  "jsdelivr": "./dist/zen-fs-github.global.js",
   "files": [
     "dist",
     "readme.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && tsup",
+    "build:iife": "tsup",
     "test": "vitest run",
     "prepublishOnly": "npm run build && npm test"
   },
@@ -26,6 +30,7 @@
   "devDependencies": {
     "@zenfs/core": "^2.5.7",
     "kerium": "^1.3.4",
+    "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
   },
